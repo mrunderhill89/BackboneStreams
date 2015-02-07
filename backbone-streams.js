@@ -35,168 +35,177 @@
   //     object.on('expand', function(){ alert('expanded'); });
   //     object.trigger('expand');
   //
-  var Streams = Backbone.Streams = {
-
-      init_streams: function(){
-          this._streams || (this._streams = {
-            new_stream: new Bacon.Bus(),
-            all: new Bacon.Bus()
-        });
-      },
-      stream: function(name, stream){
-        this.init_streams();
-        var s = this._streams[name];
-        if (!s){
-            s = this._streams[name] = (stream || new Bacon.Bus());
-            s._unsubs = [];
-            s.onValue(function(){
-                this.stream("all").push({stream:s, name:name, result:arguments});
-            }.bind(this));
-            this._streams.new_stream.push({stream:s,name:name});
-        }
-        return s;
-      },
-      has_stream: function(name){
-          this.init_streams();
-          return !!this._streams[name];
-      },
-    // Bind an event to a `callback` function. Passing `"all"` will bind
-    // the callback to all events fired.
-    on: function(name, callback, context) {
-      if (!eventsApi(this, 'on', name, [callback, context]) || !callback) return this;
-        var stream = this.stream(name);
-        var wrap = function(){
-            var result = callback.apply(this,arguments);
-            if (result === Bacon.noMore){
-                this.off(name, wrap);
-            }
-            return result;
-        }.bind(this);
-        stream._unsubs.push({
-            unsub: stream.onValue(wrap),
-            callback: callback,
-            context: context,
-            ctx: context || this
-        });
-        return this;
-    },
-
-    // Bind an event to only be triggered a single time. After the first time
-    // the callback is invoked, it will be removed.
-    once: function(name, callback, context) {
-      if (!eventsApi(this, 'once', name, [callback, context]) || !callback) return this;
-      var once = _.once(function() {
-          callback.apply(this, arguments);
-          return Bacon.noMore;
-      });
-      once._callback = callback;
-      return this.on(name, once, context);
-    },
-
-    // Remove one or many callbacks. If `context` is null, removes all
-    // callbacks with that function. If `callback` is null, removes all
-    // callbacks for the event. If `name` is null, removes all bound
-    // callbacks for all events.
-    off: function(name, callback, context) {
-      if (!this._streams || !eventsApi(this, 'off', name, [callback, context])) return this;
-        var streams = name? ({}[name] = this.stream(name)):this._streams;
-        _.each(streams, function(stream, n){
-            if(!name || name === n){
-                _.each(stream._unsubs, function(event, i){
-                   if (!context || event.context === context){
-                        if (!callback || event.callback === callback){
-                            event.unsub();
-                            stream._unsubs.splice(i, 1);
-                            delete event;
-                        }
-                   }
-                });
-            }
-        });
-      return this;
-    },
-
-    // Trigger one or many events, firing all bound callbacks. Callbacks are
-    // passed the same arguments as `trigger` is, apart from the event name
-    // (unless you're listening on `"all"`, which will cause your callback to
-    // receive the true name of the event as the first argument).
-    trigger: function(name) {
-      var args = [].slice.call(arguments, 1);
-      if (!eventsApi(this, 'trigger', name, args)) return this;
-      var stream = this.stream(name);
-      stream.push.apply(stream,args);
-      return this;
-    },
-
-    // Tell this object to stop listening to either specific events ... or
-    // to every object it's currently listening to.
-    stopListening: function(obj, name, callback) {
-      var listeningTo = this._listeningTo;
-      if (!listeningTo) return this;
-      var remove = !name && !callback;
-      if (!callback && typeof name === 'object') callback = this;
-      if (obj) (listeningTo = {})[obj._listenId] = obj;
-      for (var id in listeningTo) {
-        obj = listeningTo[id];
-        obj.off(name, callback, this);
-        if (remove || _.isEmpty(obj._events)) delete this._listeningTo[id];
-      }
-      return this;
-    }
-
-  };
-
-  // Regular expression used to split event strings.
-  var eventSplitter = /\s+/;
-
-  // Implement fancy features of the Events API such as multiple event
-  // names `"change blur"` and jQuery-style event maps `{change: action}`
-  // in terms of the existing API.
-  var eventsApi = function(obj, action, name, rest) {
-    if (!name) return true;
-
-    // Handle event maps.
-    if (typeof name === 'object') {
-      for (var key in name) {
-        obj[action].apply(obj, [key, name[key]].concat(rest));
-      }
-      return false;
-    }
-
-    // Handle space separated event names.
-    if (eventSplitter.test(name)) {
-      var names = name.split(eventSplitter);
-      for (var i = 0, length = names.length; i < length; i++) {
-        obj[action].apply(obj, [names[i]].concat(rest));
-      }
-      return false;
-    }
-
-    return true;
-  };
-    
-  var listenMethods = {listenTo: 'on', listenToOnce: 'once'};
-
-  // Inversion-of-control versions of `on` and `once`. Tell *this* object to
-  // listen to an event in another object ... keeping track of what it's
-  // listening to.
-  _.each(listenMethods, function(implementation, method) {
-    Streams[method] = function(obj, name, callback) {
-      var listeningTo = this._listeningTo || (this._listeningTo = {});
-      var id = obj._listenId || (obj._listenId = _.uniqueId('l'));
-      listeningTo[id] = obj;
-      if (!callback && typeof name === 'object') callback = this;
-      obj[implementation](name, callback, this);
-      return this;
+    var Streams = Backbone.Streams = function(streams, properties){
+        streams || (streams = {});
+        properties || (properties = {});
+        this.streams = {};
+        this.properties = {};
+        _.each(streams, function(value,key){
+            this.stream(key);
+        }.bind(this));
+        _.each(properties, function(value,key){
+            this.property(key,key,value);
+        }.bind(this));
     };
-  });
+    var default_mixins = {
+        'stream':'stream',
+        'property':'property',
+        'on_stream':'on_stream',
+        'on_property':'on_property',
+        'once_stream':'once_stream',
+        'once_property':'once_property',
+        'fire_stream':'fire_stream',
+    };
+    _.extend(Streams,{
+        prototype: _.extend(Streams.prototype, {
+            //Mixes the stream object's functions into the parent.
+            mixin: function(parent, functions){
+                //Set default mixin functions here.
+                functions || (functions=default_mixins);
+                _.each(functions, function(stream_f, backbone_f){
+                    if (!parent[backbone_f]){
+                        parent[backbone_f] = function(){
+                            return this[stream_f].apply(this,arguments);
+                        }.bind(this);
+                    }
+                }.bind(this));
+            },
+            //Returns a stream, creating a new one if necessary
+            stream: function(name, stream){
+                if (!this.streams[name]){
+                    this.streams[name] = (stream instanceof Bacon.Observable)?
+                        stream:
+                        new Bacon.Bus();
+                }
+                return this.streams[name];
+            },
+            property: function(name, stream, initial){
+                if (!this.properties[name]){
+                    if (stream instanceof Bacon.Property){
+                        this.properties[name] = stream;
+                    } else if (stream instanceof Bacon.Observable){
+                        this.properties[name] = stream.toProperty(initial);
+                    } else if (_.isString(stream)){
+                        this.properties[name] = this.stream(name).toProperty(initial);
+                    } else {
+                        throw("Streams.Property: Expected property or string for 'stream' parameter. Got "+typeof(stream)+" '"+stream+"' instead.");
+                    }
+                };
+                return this.properties[name];
+            },
+            on_stream: function(name, callback){
+                return this.stream(name).onValue(callback);
+            },
+            once_stream: function(name, callback){
+                return this.stream(name).onValue(function(){
+                    callback.apply(this,arguments);
+                    return Bacon.noMore;
+                });
+            },
+            fire_stream: function(name, value){
+                this.stream(name).push(value);
+            },
+            on_property: function(name, callback){
+                return this.property(name).onValue(callback);
+            },
+            once_property: function(name, callback){
+                return this.property(name).onValue(function(){
+                    callback.apply(this,arguments);
+                    return Bacon.noMore;
+                });
+            },            
+        }),
+        mixin: function(prototype, property, functions){
+            property || (property = "streams");
+            //Set default mixin functions here.
+            functions || (functions=default_mixins);
+            _.each(functions, function(stream_f, backbone_f){
+                if (!prototype[backbone_f]){
+                    prototype[backbone_f] = function(){
+                        var instance = this[property];
+                        return instance[stream_f].apply(instance,arguments);
+                    };
+                }
+            }.bind(this))
+        }
+    });
+    
+    /* 
+        A simple wrapper class that incorporates the Streams mixin and adds a few extra functions specific to models.
+    */
+    var StreamingModel = Backbone.StreamingModel = Backbone.Model.extend({
+        constructor: function(attributes, options){
+            var stream_params = ((options && options.streams) || {});
+            var property_params = ((options && options.properties) || {});
+            this.streams = new Streams(stream_params, property_params);
+            this.on("change", function(model, options){
+                _.each(model.changed, function(value, key){
+                    this.stream("change:"+key).push({
+                        model:model,
+                        value:value,
+                        previous:model._previousAttributes[key],
+                        options:options
+                    });
+                }.bind(this));
+            })
+            //Call Super Constructor
+            Backbone.Model.apply(this, arguments);
+        },
+        //Automatically creates properties for the model's attributes
+        property: function(name, stream, initial){
+            if (!this.streams.properties[name] && this.has(name)){
+                return this.streams.property(
+                    name, 
+                    this.stream("change:"+name).map(".value"),
+                    this.get(name)
+                );
+            }
+            return this.streams.property(name,stream,initial);
+        },
+        //Uses this.property instead of this.streams.property.
+        on_property: function(name, callback){
+            return this.property(name).onValue(callback);
+        },
+        //Uses this.property instead of this.streams.property.
+        once_property: function(name, callback){
+            return this.property(name).onValue(function(){
+                callback.apply(this,arguments);
+                return Bacon.noMore;
+            });
+        }, 
+        /*
+            This isn't stream related. It's just a helper function to cut
+            down on having to call get and set over and over.
+            If "mod" is a function, the previous value is passed into it to create the new value.
+            Otherwise, if "prev" and "mod" are both numbers, then the mod value is added to prev.
+        */
+        modify: function(attr, mod){
+            var prev = this.get(attr);
+            if (_.isFunction(mod)){
+                this.set(attr, mod(prev));
+            } else if (_.isNumber(prev) && _.isNumber(mod)){
+                this.set(attr, prev+mod);
+            }
+            return this;
+        }
+    });
+    Streams.mixin(StreamingModel.prototype,"streams");
+    
+    /* 
+        A simple wrapper class that incorporates the Streams mixin and adds a few extra functions specific to views.
+    */
+    var StreamingView = Backbone.StreamingView = Backbone.View.extend({
+        constructor: function(options){
+            var stream_params = (options.streams || {});
+            var property_params = (options.properties || {});
+            this.streams = new Streams(stream_params, property_params);
+            this.on_stream("render", function(){
+                this.render.apply(this, arguments);
+            }.bind(this));
+            Backbone.View.apply(this,arguments);
+        }
+    });
+    Streams.mixin(StreamingView.prototype,"streams")
 
-  // Aliases for backwards compatibility.
-  Streams.bind   = Streams.on;
-  Streams.unbind = Streams.off;
-  Streams.fire = Streams.trigger;
-    _.extend(Backbone.Model.prototype, Streams);
-    _.extend(Backbone.View.prototype, Streams);
-    _.extend(Backbone.Collection.prototype, Streams);
     return Backbone;
 }))
